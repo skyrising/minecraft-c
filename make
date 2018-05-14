@@ -9,3 +9,5 @@ end
 
 echo [MAIN] src/main.c -\> main
 gcc -O3 bin/*.o src/main.c -o main
+echo [MAIN] src/check_iron.c -\> check_iron
+gcc -O3 bin/*.o src/check_iron.c -o check_iron

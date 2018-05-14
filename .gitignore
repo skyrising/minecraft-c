@@ -1,4 +1,5 @@
 bin
 main
+check_iron
 src/cl/main
 src/cl/out.dat
