@@ -9,6 +9,8 @@
 #define CL_USE_DEPRECATED_OPENCL_1_2_APIS
 #include <CL/cl.h>
 
+#define CLEAR_LINE "\x1b[K"
+
 #include "clutil.h"
 
 #define TYPE CL_DEVICE_TYPE_ALL
@@ -103,13 +105,14 @@ int main(int argc, char **argv) {
   uint64_t *input = malloc(nstep * sizeof(uint64_t));
   uint8_t *output = malloc(nstep * sizeof(uint8_t));
   
-  FILE *f = fopen(file, "w");
+  // FILE *f = fopen(file, "w");
   
   char *kf = malloc(strlen(kernel_file));
   strcpy(kf, kernel_file);
   kf[strlen(kf) - 3] = 0;
   printf("Executing %s.%s\n", kf, kernel_name);
 
+  int current_count = 0;
   uint64_t t = start_timer();
   for (size_t offset = 0; offset < ntotal; offset += nstep) {
     for (size_t i = 0; i < nstep; i++) input[i] = offset + i;
@@ -124,19 +127,23 @@ int main(int argc, char **argv) {
     printf("\r<- %3.3f%%", perc);
     fflush(stdout);
     check(clEnqueueReadBuffer(queue, mem_output, 1, 0, nstep * sizeof(uint8_t), output, 0, NULL, NULL), "\nRead");
+    check(clEnqueueReadBuffer(queue, mem_input, 1, 0, nstep * sizeof(uint64_t), input, 0, NULL, NULL), "\nRead");
     uint64_t d2 = stop_timer(t2);
-    printf("\rw  %3.3f%% %.4f", perc, d2 / 1000000.f);
+    printf("\rw  %3.3f%% %.4f" CLEAR_LINE, perc, d2 / 1000000.f);
     fflush(stdout);
     int max_count = 0;
     uint64_t max_seed = 0;
     for (size_t i = 0; i < nstep; i++) {
       if (output[i] > max_count) {
         max_count = output[i];
-        max_seed = offset + i;
+        max_seed = input[i];
       }
     }
-    if (max_count > 2) printf("  %llx %d", max_seed, max_count);
-    fwrite(output, sizeof(uint8_t), nstep, f);
+    if (max_count >= current_count) {
+      current_count = max_count;
+      printf("\r%llx %d%s\n", max_seed, max_count, CLEAR_LINE);
+    }
+    // fwrite(output, sizeof(uint8_t), nstep, f);
     uint64_t d = get_timer() - t;
     double eta = ((double) d / ((offset + nstep) * 1000000000.)) * (ntotal - offset - nstep);
     printf("  %fs / %llu items = %lfns/item, ETA: %lfs", d / 1000000000.f, offset + nstep, (double) d / (offset + nstep), eta);
@@ -145,6 +152,6 @@ int main(int argc, char **argv) {
   uint64_t d = stop_timer(t);
   
   printf("%fs / %llu items = %lfns/item\n", d / 1000000000.f, ntotal, (double) d / ntotal);
-  fclose(f);
+  // fclose(f);
   return 0;
 }
