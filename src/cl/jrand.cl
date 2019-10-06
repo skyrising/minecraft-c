@@ -16,8 +16,8 @@ inline void set_internal_seed(Random *random, ulong state) {
 }
 
 inline uint random_next (Random *random, int bits) {
-  *random = trunc(fma(*random, RANDOM_MULTIPLIER, RANDOM_ADDEND) * RANDOM_SCALE);
-  return (uint)((ulong)(*random / RANDOM_SCALE) >> (48 - bits));
+  *random = trunc(fma(*random, RANDOM_MULTIPLIER, RANDOM_ADDEND) * 0x1p-48);
+  return (uint)((ulong)(*random / 0x1p-48) >> (48 - bits));
 }
 
 #else

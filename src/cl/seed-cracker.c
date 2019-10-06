@@ -11,14 +11,26 @@
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
+#ifdef _MSC_VER
+#include <malloc.h>
+#define alloca _alloca
+#define VLA(type, name, elems) type *name = alloca(sizeof(type) * elems)
+#else
+#define VLA(type, name, elems) type name[elems]
+#endif
+
 #define CLEAR_LINE "\x1b[K"
 #define TYPE CL_DEVICE_TYPE_ALL
-// #define DUMP_PTX
+#define DUMP_PTX
 
 static inline uint64_t get_timer() {
+#ifdef _MSC_VER
+  return ((uint64_t) clock())  * 1000000000ULL;
+#else
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return ((uint64_t) ts.tv_sec) * 1000000000ULL + ts.tv_nsec;
+#endif
 }
 
 static inline uint64_t start_timer() {
@@ -31,7 +43,7 @@ static inline uint64_t stop_timer(uint64_t start) {
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    fputs(stderr, "Expected at least 1 argument\n");
+    fputs("Expected at least 1 argument\n", stderr);
     return -1;
   }
   const char *kernel_file = argv[1];
@@ -43,7 +55,7 @@ int main(int argc, char **argv) {
   check(clGetPlatformIDs(0, NULL, &num_platforms), "getPlatformIDs (num)");
   printf("%d platforms:\n", num_platforms);
   
-  cl_platform_id platforms[num_platforms];
+  VLA(cl_platform_id, platforms, num_platforms);
   check(clGetPlatformIDs(num_platforms, platforms, NULL), "getPlatformIDs");
   
   cl_device_id device = NULL;
@@ -57,7 +69,7 @@ int main(int argc, char **argv) {
     cl_uint num_devices;
     check(clGetDeviceIDs(platforms[i], TYPE, 0, NULL, &num_devices), "getDeviceIDs (num)");
     
-    cl_device_id devices[num_devices];
+    VLA(cl_device_id, devices, num_devices);
     check(clGetDeviceIDs(platforms[i], TYPE, num_devices, devices, NULL), "getDeviceIDs");
     
     printf("  %d available devices:\n", num_devices);
@@ -87,7 +99,7 @@ int main(int argc, char **argv) {
   const char *header_names[] = { "jrand.cl", "seed-cracking.cl" };
   cl_int error;
   int num_headers = sizeof(header_names) / sizeof(char *);
-  cl_program headers[num_headers];
+  VLA(cl_program, headers, num_headers);
   for (int i = 0; i < num_headers; i++) {
     const char *header_src = readFile(header_names[i]);
     headers[i] = clCreateProgramWithSource(context, 1, &header_src, NULL, &error);
