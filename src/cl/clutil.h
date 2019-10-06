@@ -5,7 +5,7 @@
 #include <CL/cl.h>
 
 #ifndef CLUTIL_NAME_LEN
-#define CLUTIL_NAME_LEN 100
+#define CLUTIL_NAME_LEN 200
 #endif
 
 const char *getDeviceTypeString(cl_device_type type) {
@@ -18,20 +18,48 @@ const char *getDeviceTypeString(cl_device_type type) {
   }
 }
 
-char *getDeviceInfo(cl_device_id id) {
+typedef struct _device_info {
   cl_device_type type;
-  clGetDeviceInfo(id, CL_DEVICE_TYPE, sizeof(type), &type, NULL);
   char vendor[CLUTIL_NAME_LEN];
-  clGetDeviceInfo(id, CL_DEVICE_VENDOR, CLUTIL_NAME_LEN, &vendor, NULL);
   char name[CLUTIL_NAME_LEN];
-  clGetDeviceInfo(id, CL_DEVICE_NAME, CLUTIL_NAME_LEN, &name, NULL);
   char version[CLUTIL_NAME_LEN];
-  clGetDeviceInfo(id, CL_DEVICE_VERSION, CLUTIL_NAME_LEN, &version, NULL);
-  cl_uint cu;
-  clGetDeviceInfo(id, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(cu), &cu, NULL);
+  cl_uint compute_units;
+  char *info_str;
+} device_info;
+
+device_info *getDeviceInfo(cl_device_id id) {
+  device_info *dev_info = malloc(sizeof(device_info));
+  clGetDeviceInfo(id, CL_DEVICE_TYPE, sizeof(cl_device_type), &dev_info->type, NULL);
+  clGetDeviceInfo(id, CL_DEVICE_VENDOR, CLUTIL_NAME_LEN, &dev_info->vendor, NULL);
+  clGetDeviceInfo(id, CL_DEVICE_NAME, CLUTIL_NAME_LEN, &dev_info->name, NULL);
+  clGetDeviceInfo(id, CL_DEVICE_VERSION, CLUTIL_NAME_LEN, &dev_info->version, NULL);
+  clGetDeviceInfo(id, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(cl_uint), &dev_info->compute_units, NULL);
   size_t len = (CLUTIL_NAME_LEN + 1) * 3 + 20;
+  dev_info->info_str = malloc(len);
+  snprintf(dev_info->info_str, len, "%s %s %s %s, %u CUs",
+    getDeviceTypeString(dev_info->type),
+    dev_info->vendor,
+    dev_info->name,
+    dev_info->version,
+    dev_info->compute_units
+  );
+  return dev_info;
+}
+
+char *getPlatformInfo(cl_platform_id id) {
+  char vendor[CLUTIL_NAME_LEN];
+  clGetPlatformInfo(id, CL_PLATFORM_VENDOR, CLUTIL_NAME_LEN, vendor, NULL);
+  char name[CLUTIL_NAME_LEN];
+  clGetPlatformInfo(id, CL_PLATFORM_NAME, CLUTIL_NAME_LEN, name, NULL);
+  char version[CLUTIL_NAME_LEN];
+  clGetPlatformInfo(id, CL_PLATFORM_VERSION, CLUTIL_NAME_LEN, version, NULL);
+  char profile[CLUTIL_NAME_LEN];
+  clGetPlatformInfo(id, CL_PLATFORM_PROFILE, CLUTIL_NAME_LEN, profile, NULL);
+  char extensions[CLUTIL_NAME_LEN];
+  clGetPlatformInfo(id, CL_PLATFORM_EXTENSIONS, CLUTIL_NAME_LEN, extensions, NULL);
+  size_t len = (CLUTIL_NAME_LEN + 1) * 5 + 20;
   char *info = malloc(len);
-  snprintf(info, len, "%s %s %s %s, %u CUs", getDeviceTypeString(type), vendor, name, version, cu);
+  snprintf(info, len, "%s %s %s %s %s", vendor, name, version, profile, extensions);
   return info;
 }
 
@@ -121,15 +149,22 @@ static inline void check(cl_int code, char *prefix) {
 static inline char *readFile(const char *name) {
   size_t size = 100;
   char *s = malloc(size + 1);
-  if (!s) return s;
+  if (!s) {
+    fprintf(stderr, "Failed to allocate %llu bytes of memory\n", size + 1);
+    return s;
+  }
   FILE *file = fopen(name, "r");
-  if (!file) return NULL;
+  if (!file) {
+    fprintf(stderr, "Could not open %s for reading\n", name);
+    return NULL;
+  }
   size_t offset = 0;
   while (!feof(file)) {
     if (offset >= size) {
       size += 100;
       s = realloc(s, size + 1);
       if (!s) {
+        fprintf(stderr, "Failed to allocate %llu bytes of memory\n", size + 1);
         fclose(file);
         return s;
       }
@@ -155,6 +190,25 @@ static inline char *getLog(cl_program program, cl_device_id device) {
   char *log = (char *) malloc(log_size);
   clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, log_size, log, NULL);
   return log;
+}
+
+static inline void dumpProgramCode(cl_program program, const char *filename) {
+  cl_uint num_devices;
+  check(clGetProgramInfo(program, CL_PROGRAM_NUM_DEVICES, sizeof(num_devices), &num_devices, NULL), "clGetProgramInfo(CL_PROGRAM_NUM_DEVICES)");
+  size_t size[num_devices];
+  check(clGetProgramInfo(program, CL_PROGRAM_BINARY_SIZES, sizeof(size), &size, NULL), "clGetProgramInfo(CL_PROGRAM_BINARY_SIZES)");
+  char *binary[num_devices];
+  for (int i = 0; i < num_devices; i++) binary[i] = malloc(size[i]);
+  check(clGetProgramInfo(program, CL_PROGRAM_BINARIES, sizeof(binary), &binary, NULL), "clGetProgramInfo(CL_PROGRAM_BINARIES)");
+  int fullname_len = strlen(filename) + 15;
+  char *fullname = alloca(fullname_len);
+  for (int i = 0; i < num_devices; i++) {
+    snprintf(fullname, fullname_len, "%s_%d.ptx", filename, i);
+    FILE *file = fopen(fullname, "w");
+    fputs(binary[i], file);
+    fclose(file);
+    free(binary[i]);
+  }
 }
 
 #endif
