@@ -138,27 +138,31 @@ int main(int argc, char **argv) {
   
   cl_kernel kernel = clCreateKernel(program, kernel_name, &error);
   check(error, "Creating kernel");
-  
-  int x2total = 37;
-  int x2step = 20;
-  size_t ntotal = 1LL << x2total;
-  size_t nstep = 1LL << min(x2step, x2total);
-  uint64_t stride = 1LL << (48 - x2total);
-  
-  uint64_t nsteps = 1LL << (x2total - min(x2step, x2total));
-  printf("Total: %lu (%u), steps: %lu (%u), step size: %lu (%u), stride: %lu (%u)\n", ntotal, x2total, nsteps, x2total - min(x2step, x2total), nstep, min(x2step, x2total), stride, 48 - x2total);
 
-  cl_mem mem_seeds = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(cl_ulong) * nstep, NULL, NULL);
-  cl_mem mem_output = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(cl_ushort) * nstep, NULL, NULL);
+  int seed_bits = 48;
+  // number of kernels queued at once, number of seeds checked per kernel (log2)
+  int work_split[] = {20, 10};
+  
+  int x2step = seed_bits - work_split[0] - work_split[1];
+  size_t nsteps = 1LL << x2step;
+  size_t step_size = 1LL << work_split[0];
+  size_t stride = 1LL << work_split[1];
+  int x2total = seed_bits - work_split[1];
+  size_t ntotal = 1LL << x2total;
+  
+  printf("Total: %lu (%u), steps: %lu (%u), step size: %lu (%u), stride: %lu (%u)\n", ntotal, x2total, nsteps, x2step, step_size, work_split[0], stride, work_split[1]);
+
+  cl_mem mem_seeds = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(cl_ulong) * step_size, NULL, NULL);
+  cl_mem mem_output = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(cl_ushort) * step_size, NULL, NULL);
   
   check(clSetKernelArg(kernel, 1, sizeof(cl_ulong), &stride), "Argument stride");
   check(clSetKernelArg(kernel, 2, sizeof(cl_mem), &mem_seeds), "Argument seeds");
   check(clSetKernelArg(kernel, 3, sizeof(cl_mem), &mem_output), "Argument output");
   
-  size_t global_work_size[1] = { nstep };
+  size_t global_work_size[] = { step_size };
   
-  uint64_t *seeds = malloc(nstep * sizeof(uint64_t));
-  uint16_t *output = malloc(nstep * sizeof(uint16_t));
+  uint64_t *seeds = malloc(step_size * sizeof(uint64_t));
+  uint16_t *output = malloc(step_size * sizeof(uint16_t));
   
   printf("Executing %s.%s\n", kf, kernel_name);
   
@@ -170,9 +174,9 @@ int main(int argc, char **argv) {
   printf("Writing log to %s\n", log_file_name);
 
   uint64_t t = start_timer();
-  for (size_t offset = 0; offset < ntotal; offset += nstep) {
-    for (size_t i = 0; i < nstep; i++) seeds[i] = offset + i;
-    float perc = offset * 100.f / ntotal;
+  for (size_t step = 0; step < nsteps; step++) {
+    size_t offset = step * step_size;
+    float perc = step * 100.f / nsteps;
     uint64_t t2 = start_timer();
     check(clSetKernelArg(kernel, 0, sizeof(offset), &offset), "Argument offset");
     printf("\rx  %3.3f%%", perc);
@@ -182,12 +186,12 @@ int main(int argc, char **argv) {
     check(clFinish(queue), "\nFinish execute");
     printf("\r<- %3.3f%%", perc);
     fflush(stdout);
-    check(clEnqueueReadBuffer(queue, mem_output, 1, 0, nstep * sizeof(uint16_t), output, 0, NULL, NULL), "\nRead");
-    check(clEnqueueReadBuffer(queue, mem_seeds, 1, 0, nstep * sizeof(uint64_t), seeds, 0, NULL, NULL), "\nRead");
+    check(clEnqueueReadBuffer(queue, mem_output, 1, 0, step_size * sizeof(uint16_t), output, 0, NULL, NULL), "\nRead");
+    check(clEnqueueReadBuffer(queue, mem_seeds, 1, 0, step_size * sizeof(uint64_t), seeds, 0, NULL, NULL), "\nRead");
     uint64_t d2 = stop_timer(t2);
     printf("\rw  %3.3f%% %.4f" CLEAR_LINE, perc, d2 / 1000000.f);
     fflush(stdout);
-    for (size_t i = 0; i < nstep; i++) {
+    for (size_t i = 0; i < step_size; i++) {
       uint8_t count = output[i];
       if (count > 0) {
         fprintf(log_file, "%016llx\n", seeds[i]);
@@ -199,10 +203,11 @@ int main(int argc, char **argv) {
     }
     fflush(log_file);
     uint64_t d = get_timer() - t;
-    double per_item = (double) d / (offset + nstep);
-    double eta = ((double) d / ((offset + nstep) * 1000000000.)) * (ntotal - offset - nstep);
+    size_t items_done = offset + step_size;
+    double per_item = (double) d / items_done;
+    double eta = per_item * (ntotal - items_done) / 1e9;
     uint64_t d2ms = d2 / 1000000;
-    printf("  %fs / %llu items = %lfns/item, %lums/batch, ETA: %lfs (%dh%dm%ds)", d / 1000000000.f, offset + nstep,
+    printf("  %fs / %llu items = %lfns/item, %lums/batch, ETA: %lfs (%dh%dm%ds)", d / 1e9f, items_done,
       per_item, d2ms, eta,
       (int) (eta / 3600), ((int) (eta / 60)) % 60, ((int) eta) % 60);
   }
